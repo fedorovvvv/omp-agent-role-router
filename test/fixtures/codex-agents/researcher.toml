@@ -1,0 +1,5 @@
+name = "researcher"
+description = "Deep research subagent."
+developer_instructions = "Research thoroughly before answering."
+model = "gpt-5.6-terra"
+model_reasoning_effort = "high"
