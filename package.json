@@ -1,0 +1,48 @@
+{
+  "name": "omp-agent-role-router",
+  "version": "0.1.0",
+  "description": "omp extension that routes Claude Code / Codex plugin subagents to omp model roles based on the tier they declare",
+  "type": "module",
+  "license": "MIT",
+  "author": "Nikita Fedorov",
+  "homepage": "https://github.com/fedorovvvv/omp-agent-role-router#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fedorovvvv/omp-agent-role-router.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fedorovvvv/omp-agent-role-router/issues"
+  },
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "extension",
+    "claude-code",
+    "codex",
+    "subagents",
+    "model-roles"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.3.0",
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  }
+}
