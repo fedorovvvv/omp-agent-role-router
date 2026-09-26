@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import * as path from "node:path";
 import type {
 	BeforeSubagentSpawnEvent,
@@ -51,12 +51,18 @@ function buildStub(options: {
 		get: (key: string) => (key === "task.agentModelOverrides" ? (options.overrides ?? {}) : undefined),
 	};
 
+	// omp 18.3: the extension reads the session-scoped settings (`findScopedSettings`) and resolves
+	// `task.agentModelOverrides` through the settings registry (`lookup`) instead of the removed
+	// `Settings.instance` / `Settings#get`. Both SDK subpaths are replaced for this test.
+	mock.module("@oh-my-pi/pi-coding-agent/config/settings", () => ({ findScopedSettings: () => settingsInstance }));
+	mock.module("@oh-my-pi/pi-coding-agent/config/registry", () => ({
+		lookup: (key: string) => ({ get: () => settingsInstance.get(key) }),
+	}));
 	const sdk = {
 		discoverAgents: async () => ({
 			agents: [{ name: "planner", filePath: path.join(CLAUDE_PLUGIN, "planner.md") }],
 		}),
 		getAgentDir: () => "/fake/.omp/agent",
-		Settings: { instance: settingsInstance },
 	};
 
 	const stubApi = {
@@ -127,14 +133,25 @@ describe("agentRoleRouter extension wiring", () => {
 		expect(result).toEqual({ model: "@slow", note: "agentRoleRouter.agents.planner → @slow" });
 	});
 
-	test("leaves the spawn untouched when the resolved role has no available model", async () => {
+	// omp 18.3 resolves a returned role again against the CHILD session's settings; the parent's
+	// ExtensionContext.models is only a snapshot and may not know a role defined solely in an
+	// isolated child overlay. So the role is returned even when the parent cannot resolve it.
+	test("returns the role even when the parent's model facade cannot resolve it", async () => {
 		const parent = { provider: "anthropic", id: "claude-haiku-4-5" };
 		const stub = buildStub({ current: parent, roles: {} });
 		agentRoleRouter(stub.pi);
 
 		const result = await stub.fire(spawnEvent(["anthropic/claude-haiku-4-5"]));
 
-		expect(result).toBeUndefined();
+		expect(result?.model).toBe("@task");
+	});
+
+	test("falls back to the single inherited pattern when the headless context has no current model", async () => {
+		const stub = buildStub({ current: undefined as unknown as FakeModel, roles: {} });
+		agentRoleRouter(stub.pi);
+
+		expect((await stub.fire(spawnEvent(["anthropic/claude-haiku-4-5"])))?.model).toBe("@task");
+		expect(await stub.fire(spawnEvent(["anthropic/claude-haiku-4-5", "zai/glm-5.3"]))).toBeUndefined();
 	});
 
 	test("an explicit non-inherited pattern is left untouched (never overrides an explicit per-call model)", async () => {
