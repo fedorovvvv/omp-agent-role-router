@@ -9,6 +9,8 @@
  * concrete model — so `modelRoles` keeps deciding what actually runs.
  */
 import type { ExtensionAPI, ExtensionContext, Settings } from "@oh-my-pi/pi-coding-agent";
+import { lookup } from "@oh-my-pi/pi-coding-agent/config/registry";
+import { findScopedSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentDefinitionIndex, discoveryInputs } from "./agents";
 import { CONFIG_KEY, loadConfig } from "./config";
 import { isEffectiveModelOverride } from "./parse";
@@ -34,11 +36,9 @@ export default function agentRoleRouter(pi: ExtensionAPI): void {
 	};
 
 	pi.on("before_subagent_spawn", async (event, ctx) => {
-		let settings: Settings;
-		try {
-			settings = sdk.Settings.instance;
-		} catch (error) {
-			warnOnce(`omp settings are unavailable, routing is off for this session (${String(error)})`, ctx);
+		const settings: Settings | undefined = findScopedSettings();
+		if (!settings) {
+			warnOnce("omp settings are unavailable, routing is off for this session", ctx);
 			return undefined;
 		}
 		const { config, warnings } = loadConfig(
@@ -48,17 +48,27 @@ export default function agentRoleRouter(pi: ExtensionAPI): void {
 		for (const warning of warnings) warnOnce(warning, ctx);
 		const debug = config.debug || process.env[DEBUG_ENV] === "1";
 
-		const overrides = settings.get("task.agentModelOverrides");
+		const configuredOverrides = lookup("task.agentModelOverrides")?.get(settings);
+		const overrides = configuredOverrides && typeof configuredOverrides === "object" && !Array.isArray(configuredOverrides)
+			? (configuredOverrides as Record<string, unknown>)
+			: {};
 		const current = ctx.models.current();
+		// In a headless SDK session this hook can fire before ExtensionContext knows the current
+		// model, while `patterns` already holds the parent's inherited choice. A single pattern is
+		// the only reliable fallback; several stay unknown so a retry chain is never mistaken for
+		// the inherited state.
+		const currentModel = current
+			? `${current.provider}/${current.id}`
+			: event.patterns.length === 1
+				? event.patterns[0]
+				: undefined;
 		const decision = await decide(
 			{
 				agent: event.agent,
 				modelRole: event.modelRole,
 				patterns: event.patterns,
-				currentModel: current ? `${current.provider}/${current.id}` : undefined,
-				hasModelOverride: isEffectiveModelOverride(
-					Object.hasOwn(overrides, event.agent) ? overrides[event.agent] : undefined,
-				),
+				currentModel,
+				hasModelOverride: isEffectiveModelOverride(asOverride(Object.hasOwn(overrides, event.agent) ? overrides[event.agent] : undefined)),
 			},
 			config,
 			() => index.lookup(ctx.cwd, event.agent),
@@ -68,22 +78,24 @@ export default function agentRoleRouter(pi: ExtensionAPI): void {
 			if (debug) pi.logger.debug(`${LOG_PREFIX}: left ${event.agent} untouched`, { reason: decision.reason, event });
 			return undefined;
 		}
-		const target = ctx.models.resolve(decision.role);
-		if (!target) {
-			warnOnce(
-				`${decision.role} (${decision.note}) resolves to no available model; ${event.agent} keeps the inherited model`,
-				ctx,
-			);
-			return undefined;
-		}
+		// `resolveConfiguredModelPatterns()` resolves the role again against the child session's
+		// settings after the event. ExtensionContext.models is a snapshot of the parent's request
+		// facade and may lack a role defined only in this session's isolated overlay; returning the
+		// role leaves the final decision to the child's authoritative resolver.
 		if (debug) {
 			pi.logger.debug(`${LOG_PREFIX}: routed ${event.agent}`, {
 				note: decision.note,
 				role: decision.role,
-				resolves: `${target.provider}/${target.id}`,
 				event,
 			});
 		}
 		return { model: decision.role, note: decision.note };
 	});
+}
+
+/** A `task.agentModelOverrides` value only counts when it has the shape omp accepts. */
+function asOverride(value: unknown): string | readonly string[] | undefined {
+	if (typeof value === "string") return value;
+	if (Array.isArray(value) && value.every(entry => typeof entry === "string")) return value as readonly string[];
+	return undefined;
 }
