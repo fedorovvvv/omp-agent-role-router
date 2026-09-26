@@ -1,6 +1,6 @@
 {
   "name": "omp-agent-role-router",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "omp extension that routes Claude Code / Codex plugin subagents to omp model roles based on the tier they declare",
   "type": "module",
   "license": "MIT",
